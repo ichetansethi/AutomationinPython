@@ -1,9 +1,5 @@
-io
-typing
 streamlit
 pandas
+plotly
+openpyxl
 matplotlib
-plotly.express
-warnings
-datetime
-plotly.graph_objs._figure
