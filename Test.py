@@ -31,12 +31,33 @@ class BugTracker:
         "Reporting Category",
         "Bug Severity",
         "Mode of Reporting",
-        "Resolution Time (Mins)"
+        "Resolution Time (Mins)",
+        "Response Time (Mins)"  
     ]
     
     PAGE_TITLE = 'Issue Summary Dashboard'
     PAGE_ICON = ':bar_chart:'
     FILTER_COLUMNS = ["Reporting Category", "Bug Severity", "Mode of Reporting"]
+
+    def get_status_filters(self) -> list:
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            open_issues = st.checkbox("Open", value=False)
+        with col2:
+            pending_issues = st.checkbox("Pending", value=False)
+        with col3:
+            in_progress = st.checkbox("In Progress", value=False)
+
+        filters = []
+        if open_issues:
+            filters.append("Open")
+        if pending_issues:
+            filters.append("Pending")
+        if in_progress:
+            filters.append("In Progress")
+
+        return filters
 
     def __init__(self):
         """Initialize the dashboard with basic Streamlit configuration."""
@@ -99,7 +120,7 @@ class BugTracker:
     def create_time_series_chart(self, df: pd.DataFrame) -> Figure:
         """
         Create an enhanced time series chart showing average resolution time trends,
-        including issue count and rolling average.
+        including issue count.
 
         Args:
             df: DataFrame containing the filtered data
@@ -118,9 +139,6 @@ class BugTracker:
             .sort_values("month_year")
         )
 
-        # Rolling average for trend smoothing
-        linechart["Rolling Avg"] = linechart["Resolution Time (Mins)"].rolling(window=3, min_periods=1).mean()
-
         # Convert to string for display
         linechart["month_year_str"] = linechart["month_year"].astype(str)
 
@@ -132,17 +150,8 @@ class BugTracker:
             x=linechart["month_year_str"], 
             y=linechart["Resolution Time (Mins)"], 
             mode="lines+markers", 
-            name="Avg Resolution Time",
+            name="Mean Resolution Time (Mins)",
             line=dict(color="blue")
-        ))
-
-        # Add rolling average line
-        fig.add_trace(go.Scatter(
-            x=linechart["month_year_str"], 
-            y=linechart["Rolling Avg"], 
-            mode="lines", 
-            name="3-Month Rolling Avg",
-            line=dict(color="red", dash="dash")
         ))
 
         # Add issue count as bar chart
@@ -157,9 +166,9 @@ class BugTracker:
 
         # Update layout for dual-axis
         fig.update_layout(
-            title="Time Series Analysis: Avg Resolution Time vs. Issue Count",
+            title="Time Series Analysis: Mean Resolution Time (Mins) vs. Issue Count",
             xaxis_title="Month-Year",
-            yaxis=dict(title="Avg Resolution Time (Mins)", side="left"),
+            yaxis=dict(title="Mean Resolution Time (Mins)", side="left"),
             yaxis2=dict(title="Number of Issues", overlaying="y", side="right"),
             height=500,
             template="gridon"
@@ -241,7 +250,7 @@ class BugTracker:
         }).reset_index()
         
         # Flatten column names and rename for clarity
-        severity_analysis.columns = ['Bug Severity', 'Count of Bugs', 'Mean Resolution Time']
+        severity_analysis.columns = ['Bug Severity', 'Count of Bugs', 'Mean Resolution Time (Mins)']
         
         # Sort by severity level to ensure correct order
         severity_order = ['P1', 'P2', 'P3', 'P4']
@@ -251,9 +260,6 @@ class BugTracker:
             ordered=True
         )
         severity_analysis = severity_analysis.sort_values('Bug Severity')
-        
-        # Round mean resolution time for better readability
-        severity_analysis['Mean Resolution Time'] = severity_analysis['Mean Resolution Time'].round(2)
         
         return severity_analysis
 
@@ -331,6 +337,17 @@ class BugTracker:
             st.error(f"Error creating severity pie chart: {str(e)}")
             return None
 
+    # Fixed: Changed to instance method with self parameter
+    def bug_severity_color(self, val):
+        """Apply color coding to Bug Severity values."""
+        color_map = {
+            'P1': 'background-color: red',
+            'P2': 'background-color: orange',
+            'P3': 'background-color: yellow',
+            'P4': 'background-color: green'
+        }
+        return color_map.get(val, '')
+
     def create_summary_tables(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
         Create summary tables for issues by category and bug severity with custom column names.
@@ -346,17 +363,19 @@ class BugTracker:
         category_summary = df.groupby("Reporting Category").agg({
             'Resolution Time (Mins)': ['size', 'mean']  # Using size instead of count to get total issues
         })
-        category_summary.columns = ['Count of Issues', 'Mean Resolution Time']
+        category_summary.columns = ['Count of Issues', 'Mean Resolution Time (Mins)']
+        category_summary = category_summary.reset_index()  # Reset index to make Reporting Category a column
 
         # Create bug severity summary with counts and mean resolution time
         bug_summary = df.groupby("Bug Severity").agg({
             'Resolution Time (Mins)': ['size', 'mean']  # Using size instead of count to get total issues
         })
-        bug_summary.columns = ['Count of Issues', 'Mean Resolution Time']
+        bug_summary.columns = ['Count of Issues', 'Mean Resolution Time (Mins)']
+        bug_summary = bug_summary.reset_index()  # Reset index to make Bug Severity a column
 
         # Round mean resolution times to 2 decimal places for better readability
-        category_summary['Mean Resolution Time'] = category_summary['Mean Resolution Time'].round(2)
-        bug_summary['Mean Resolution Time'] = bug_summary['Mean Resolution Time'].round(2)
+        category_summary['Mean Resolution Time (Mins)'] = category_summary['Mean Resolution Time (Mins)'].round(2)
+        bug_summary['Mean Resolution Time (Mins)'] = bug_summary['Mean Resolution Time (Mins)'].round(2)
 
         return category_summary, bug_summary
 
@@ -374,6 +393,11 @@ class BugTracker:
         Returns:
             pd.DataFrame: Processed DataFrame with columns for category and both time metrics
         """
+        # Check if Response Time column exists, if not create it with default values
+        if 'Response Time (Mins)' not in df.columns:
+            st.warning("'Response Time (Mins)' column is missing. Using placeholder values.")
+            df['Response Time (Mins)'] = df['Resolution Time (Mins)'] * 0.4  # Using 40% of resolution time as estimate
+        
         # Calculate mean times for each category
         category_analysis = df.groupby('Reporting Category').agg({
             'Resolution Time (Mins)': 'mean',
@@ -381,14 +405,14 @@ class BugTracker:
         }).reset_index()
 
         # Rename columns for clarity
-        category_analysis.columns = ['Category', 'Avg Resolution Time', 'Avg Response Time']
+        category_analysis.columns = ['Category', 'Mean Resolution Time (Mins)', 'Mean Response Time (Mins)']
 
         # Round the time values for better readability
-        category_analysis['Avg Resolution Time'] = category_analysis['Avg Resolution Time'].round(2)
-        category_analysis['Avg Response Time'] = category_analysis['Avg Response Time'].round(2)
+        category_analysis['Mean Resolution Time (Mins)'] = category_analysis['Mean Resolution Time (Mins)'].round(2)
+        category_analysis['Mean Response Time (Mins)'] = category_analysis['Mean Response Time (Mins)'].round(2)
 
         # Sort by average resolution time to highlight categories needing most attention
-        category_analysis = category_analysis.sort_values('Avg Resolution Time', ascending=False)
+        category_analysis = category_analysis.sort_values('Mean Resolution Time (Mins)', ascending=False)
 
         return category_analysis
 
@@ -478,6 +502,107 @@ class BugTracker:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
+    # Helper functions for styling tables
+    def blue_gradient_resolution_time(self, val):
+        """
+        Apply a vibrant blue gradient based on resolution time value.
+        
+        This function creates a gradient from light blue to deep blue
+        based on the normalized resolution time value. Higher values
+        receive deeper blue colors.
+        
+        Args:
+            val: The resolution time value to be colored
+            
+        Returns:
+            str: CSS style string with background color
+        """
+        if pd.isna(val):  # Handle NaN values
+            return ''
+        
+        # Normalize value between 0 and 1 (higher values get deeper blue)
+        # Assuming reasonable upper limit (adjust based on your data)
+        normalized = min(val / 1500, 1.0)
+        
+        # Calculate RGB values for a true blue gradient
+        # Start with light blue (173, 216, 230) for low values
+        # End with deep blue (0, 0, 139) for high values
+        r = int(173 - (173 * normalized))  # Reduce red as value increases
+        g = int(216 - (216 * normalized))  # Reduce green as value increases
+        b = int(230 - (91 * normalized))   # Reduce blue slightly (from 230 to 139)
+        
+        # Determine text color based on background brightness
+        # Use white text for darker backgrounds, black for lighter ones
+        brightness = (r * 299 + g * 587 + b * 114) / 1000
+        text_color = 'white' if brightness < 128 else 'black'
+        
+        return f'background-color: rgb({r}, {g}, {b}); color: {text_color};'
+    
+    def style_category_table(self, df):
+        """Apply styling to the category summary table."""
+        # Create a copy of the styling DataFrame
+        styled = df.style
+        
+        # Style the Mean Resolution Time column with blue gradient
+        styled = styled.applymap(
+            self.blue_gradient_resolution_time,
+            subset=['Mean Resolution Time (Mins)']
+        )
+        
+        # Create a new function that accesses the category directly
+        def color_category_counts(s):
+            colors = []
+            for idx, row in df.iterrows():
+                category = row['Reporting Category']
+                if category in ['Issue - Bug', 'Issue - Understanding', 'Issue - Data Issue']:
+                    colors.append('background-color: #FFB6C1; color: black;')  # Light Red for issues
+                else:
+                    colors.append('background-color: #90EE90; color: black;')  # Light Green for requests
+            return colors
+        
+        # Apply the styling to the Count column using apply
+        styled = styled.apply(
+            color_category_counts, 
+            axis=0,  # Apply column-wise
+            subset=['Count of Issues']
+        )
+        
+        return styled
+
+    def style_bug_table(self, df):
+        """Apply styling to the bug severity summary table."""
+        # Create a copy of the styling DataFrame
+        styled = df.style
+        
+        # Style the Mean Resolution Time column with blue gradient
+        styled = styled.applymap(
+            self.blue_gradient_resolution_time, 
+            subset=['Mean Resolution Time (Mins)']
+        )
+        
+        # Create a function that creates a list of styles based on severity
+        def color_severity_counts(s):
+            colors = []
+            for idx, row in df.iterrows():
+                severity = row['Bug Severity']
+                color_map = {
+                    'P1': 'background-color: #FF4444; color: white;',  # Red
+                    'P2': 'background-color: #FFA500; color: black;',  # Orange
+                    'P3': 'background-color: #FFFF00; color: black;',  # Yellow
+                    'P4': 'background-color: #90EE90; color: black;'   # Light Green
+                }
+                colors.append(color_map.get(severity, ''))
+            return colors
+        
+        # Apply the styling to the Count column using apply
+        styled = styled.apply(
+            color_severity_counts, 
+            axis=0,  # Apply column-wise
+            subset=['Count of Issues']
+        )
+        
+        return styled
+    
     def run(self) -> None:
         """
         Main method to run the dashboard application.
@@ -489,11 +614,21 @@ class BugTracker:
             return
             
         df = self.load_data(uploaded_file)
-        
+
+
+        # Show filter checkboxes
+        filters = self.get_status_filters()
+
+        # Apply filters
+        if filters:
+            filtered_df = df[df["Status"].isin(filters)]
+            st.dataframe(filtered_df)
+
+        # Show filtered issues
         if df is None or df.empty:
-            st.error("Unable to process the uploaded file. Please check the file format and contents.")
+            st.warning("No data available after applying filters.")
             return
-            
+
         # Set up filters
         start_date, end_date = self.setup_date_filters(df)
         df = df[
@@ -522,62 +657,35 @@ class BugTracker:
         st.subheader('Time Series Analysis')
         st.plotly_chart(self.create_time_series_chart(df), use_container_width=True)
 
+        category_summary, bug_summary = self.create_summary_tables(df)
+
+        # Compute max resolution time across both tables
+        max_val = max(
+            category_summary['Mean Resolution Time (Mins)'].max(),
+            bug_summary['Mean Resolution Time (Mins)'].max()
+        )
+
         # Summary Tables
         col1, col2 = st.columns(2)
-        category_summary, bug_summary = self.create_summary_tables(df)
 
         with col1:
             st.subheader('Issues by Category')
-            st.dataframe(category_summary.style.background_gradient(cmap='RdYlGn_r',subset=['Mean Resolution Time']).
-                         background_gradient(cmap='Blues',subset=['Count of Issues']).format({'Count of Issues': '{:,.0f}', 'Mean Resolution Time': '{:,.2f}'}))
-
+            
+            # Apply styling to category summary table
+            styled_category = self.style_category_table(category_summary)
+            
+            # Display styled DataFrame without index
+            st.dataframe(styled_category, hide_index=True)
+            
         with col2:
             st.subheader('Issues by Bug Severity')
-            st.dataframe(bug_summary.style.background_gradient(cmap='RdYlGn_r', subset=['Mean Resolution Time'])
-                         .background_gradient(cmap='Blues',subset=['Count of Issues']).format({'Count of Issues': '{:,.0f}','Mean Resolution Time': '{:,.2f}'}))
-
-        # Issue Distribution Visualization
-        st.subheader("Issue Distribution by Category and Reporting Mode")
-        bar_chart = self.create_issue_distribution(df)
-        if bar_chart:
-            st.plotly_chart(bar_chart, use_container_width=True)
-        st.caption("This graph shows how many issues were reported through different modes across each category. Taller bars indicate more issues reported through that particular mode.")
             
-        # Create columns for better visual organization
-        col1, col2 = st.columns([2, 1])
-
-        # Create the severity pie chart
-        severity_pie = self.create_severity_pie(df)
-
-        with col1:
-            st.subheader('Bug Distribution by Severity Level')
-        if severity_pie:
-            st.plotly_chart(severity_pie, use_container_width=True)
-
-        with col2:
-            st.subheader('Severity Level Guide')
-        st.markdown("""
-            **P1 - Critical**
-            - Immediate attention required
-            - System-critical bugs
-            - Major business impact
+            # Apply styling to bug summary table
+            styled_bug = self.style_bug_table(bug_summary)
             
-            **P2 - High**
-            - Significant functionality affected
-            - High business impact
-            - Needs quick resolution
-            
-            **P3 - Medium**
-            - Moderate impact on functionality
-            - Regular priority fixes
-            - Non-critical features affected
-            
-            **P4 - Low**
-            - Minor issues
-            - Minimal business impact
-            - Can be addressed in regular maintenance
-        """)
-        
+            # Display styled DataFrame without index
+            st.dataframe(styled_bug, hide_index=True)
+
         # Create the dual-axis visualization for bug severity analysis
         st.subheader("Bug Distribution and Resolution Time by Severity")
 
@@ -589,57 +697,57 @@ class BugTracker:
 
         # Add bar chart for bug counts
         fig.add_trace(
-        go.Bar(
-            x=severity_analysis['Bug Severity'],
-            y=severity_analysis['Count of Bugs'],
-            name="Count of Bugs",
-            marker_color='rgb(158,202,225)',
-            text=severity_analysis['Count of Bugs'],
-            textposition='auto',
-        ),
-        secondary_y=False
+            go.Bar(
+                x=severity_analysis['Bug Severity'],
+                y=severity_analysis['Count of Bugs'],
+                name="Count of Bugs",
+                marker_color='rgb(158,202,225)',
+                text=severity_analysis['Count of Bugs'],
+                textposition='auto',
+            ),
+            secondary_y=False
         )
 
         # Add line chart for resolution time
         fig.add_trace(
-        go.Scatter(
-            x=severity_analysis['Bug Severity'],
-            y=severity_analysis['Mean Resolution Time'],
-            name="Mean Resolution Time",
-            line=dict(color='rgb(255,127,14)', width=3),
-            mode='lines+markers+text',
-            text=severity_analysis['Mean Resolution Time'].round(1),
-            textposition='top center',
-            marker=dict(size=10)
-        ),
-        secondary_y=True
+            go.Scatter(
+                x=severity_analysis['Bug Severity'],
+                y=severity_analysis['Mean Resolution Time (Mins)'],
+                name="Mean Resolution Time (Mins)",
+                line=dict(color='rgb(255,127,14)', width=3),
+                mode='lines+markers+text',
+                text=severity_analysis['Mean Resolution Time (Mins)'].round(1),
+                textposition='top center',
+                marker=dict(size=10)
+            ),
+            secondary_y=True
         )
 
         # Update layout with titles and labels
         fig.update_layout(
-        title_text="Bug Count and Resolution Time Analysis by Severity",
-        showlegend=True,
-        height=500,
-        bargap=0.3,
-        legend=dict(
-            yanchor="top",
-            y=0.99,
-            xanchor="left",
-            x=0.01
-        )
+            title_text="Bug Count and Resolution Time Analysis by Severity",
+            showlegend=True,
+            height=500,
+            bargap=0.3,
+            legend=dict(
+                yanchor="top",
+                y=0.99,
+                xanchor="left",
+                x=0.01
+            )
         )
 
         # Update axes titles
         fig.update_xaxes(title_text="Bug Severity Level")
         fig.update_yaxes(
-        title_text="Count of Bugs", 
-        secondary_y=False,
-        gridcolor='lightgray'
+            title_text="Count of Bugs", 
+            secondary_y=False,
+            gridcolor='lightgray'
         )
         fig.update_yaxes(
-        title_text="Mean Resolution Time (mins)", 
-        secondary_y=True,
-        gridcolor='lightgray'
+            title_text="Mean Resolution Time (mins)", 
+            secondary_y=True,
+            gridcolor='lightgray'
         )
 
         # Display the plot in Streamlit
@@ -664,65 +772,65 @@ class BugTracker:
 
         # Add line for average resolution time
         fig.add_trace(
-        go.Scatter(
-            x=category_analysis['Category'],
-            y=category_analysis['Avg Resolution Time'],
-            name="Average Resolution Time",
-            line=dict(color='rgb(31, 119, 180)', width=3),  # Blue line
-            mode='lines+markers+text',
-            text=category_analysis['Avg Resolution Time'].round(1),
-            textposition='top center',
-            marker=dict(size=8)
-        ),
-        secondary_y=False
+            go.Scatter(
+                x=category_analysis['Category'],
+                y=category_analysis['Mean Resolution Time (Mins)'],
+                name="Average Resolution Time",
+                line=dict(color='rgb(31, 119, 180)', width=3),  # Blue line
+                mode='lines+markers+text',
+                text=category_analysis['Mean Resolution Time (Mins)'].round(1),
+                textposition='top center',
+                marker=dict(size=8)
+            ),
+            secondary_y=False
         )
 
         # Add line for average response time
         fig.add_trace(
-        go.Scatter(
-            x=category_analysis['Category'],
-            y=category_analysis['Avg Response Time'],
-            name="Average Response Time",
-            line=dict(color='rgb(255, 127, 14)', width=3),  # Orange line
-            mode='lines+markers+text',
-            text=category_analysis['Avg Response Time'].round(1),
-            textposition='bottom center',
-            marker=dict(size=8)
-        ),
-        secondary_y=True
+            go.Scatter(
+                x=category_analysis['Category'],
+                y=category_analysis['Mean Response Time (Mins)'],  # Fixed column name
+                name="Average Response Time",
+                line=dict(color='rgb(255, 127, 14)', width=3),  # Orange line
+                mode='lines+markers+text',
+                text=category_analysis['Mean Response Time (Mins)'].round(1),  # Fixed column name
+                textposition='bottom center',
+                marker=dict(size=8)
+            ),
+            secondary_y=True
         )
 
         # Update layout with titles and labels
         fig.update_layout(
-        title_text="Average Resolution and Response Times by Category",
-        showlegend=True,
-        height=600,
-        legend=dict(
-            yanchor="top",
-            y=0.99,
-            xanchor="right",
-            x=0.99
-        ),
-        # Add more whitespace on bottom for labels
-        margin=dict(b=100)
+            title_text="Average Resolution and Response Times by Category",
+            showlegend=True,
+            height=600,
+            legend=dict(
+                yanchor="top",
+                y=0.99,
+                xanchor="right",
+                x=0.99
+            ),
+            # Add more whitespace on bottom for labels
+            margin=dict(b=100)
         )
 
         # Customize the axes
         fig.update_xaxes(
-        title_text="Issue Category",
-        tickangle=45  # Angle the category labels for better readability
+            title_text="Issue Category",
+            tickangle=45  # Angle the category labels for better readability
         )
         fig.update_yaxes(
-        title_text="Average Resolution Time (mins)", 
-        secondary_y=False,
-        gridcolor='lightgray',
-        zeroline=True
+            title_text="Average Resolution Time (mins)", 
+            secondary_y=False,
+            gridcolor='lightgray',
+            zeroline=True
         )
         fig.update_yaxes(
-        title_text="Average Response Time (mins)", 
-        secondary_y=True,
-        gridcolor='lightgray',
-        zeroline=True
+            title_text="Average Response Time (mins)", 
+            secondary_y=True,
+            gridcolor='lightgray',
+            zeroline=True
         )
 
         # Display the plot in Streamlit
@@ -735,6 +843,48 @@ class BugTracker:
         - Orange line: Average time taken to initially respond to issues (Response Time)
         Higher values indicate areas that might need process improvements.
         """)
+
+        # Issue Distribution Visualization
+        st.subheader("Issue Distribution by Category and Reporting Mode")
+        bar_chart = self.create_issue_distribution(df)
+        if bar_chart:
+            st.plotly_chart(bar_chart, use_container_width=True)
+        st.caption("This graph shows how many issues were reported through different modes across each category. Taller bars indicate more issues reported through that particular mode.")
+            
+        # Create columns for better visual organization
+        col1, col2 = st.columns([2, 1])
+
+        # Create the severity pie chart
+        severity_pie = self.create_severity_pie(df)
+
+        with col1:
+            st.subheader('Bug Distribution by Severity Level')
+            if severity_pie:
+                st.plotly_chart(severity_pie, use_container_width=True)
+
+        with col2:
+            st.subheader('Severity Level Guide')
+            st.markdown("""
+                **P1 - Critical**
+                - Immediate attention required
+                - System-critical bugs
+                - Major business impact
+                
+                **P2 - High**
+                - Significant functionality affected
+                - High business impact
+                - Needs quick resolution
+                
+                **P3 - Medium**
+                - Moderate impact on functionality
+                - Regular priority fixes
+                - Non-critical features affected
+                
+                **P4 - Low**
+                - Minor issues
+                - Minimal business impact
+                - Can be addressed in regular maintenance
+            """)
 
 if __name__ == "__main__":
     warnings.filterwarnings('ignore')
